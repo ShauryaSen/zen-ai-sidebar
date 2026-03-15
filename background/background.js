@@ -26,12 +26,68 @@
       });
       if (!tabs || tabs.length === 0) return null;
 
+      const url = tabs[0].url || "";
+
+      // Arxiv PDF pages — content scripts can't inject into PDFs,
+      // so fetch the abstract page directly from the background script
+      const arxivPdfMatch = url.match(/arxiv\.org\/pdf\/([^/?#]+)/);
+      if (arxivPdfMatch) {
+        const arxivId = arxivPdfMatch[1].replace(/\.pdf$/, "");
+        return await fetchArxivAbstract(arxivId);
+      }
+
       const response = await browser.tabs.sendMessage(tabs[0].id, {
         type: "GET_PAGE_CONTENT",
       });
       return response;
     } catch (e) {
       console.warn("Could not get page content:", e.message);
+      return null;
+    }
+  }
+
+  // Fetch and parse an arxiv abstract page directly
+  async function fetchArxivAbstract(arxivId) {
+    try {
+      const absUrl = `https://arxiv.org/abs/${arxivId}`;
+      const resp = await fetch(absUrl);
+      if (!resp.ok) throw new Error("Failed to fetch arxiv page");
+      const html = await resp.text();
+
+      // Parse fields with regex (no DOMParser in background scripts)
+      const extract = (pattern) => {
+        const m = html.match(pattern);
+        return m ? m[1].replace(/<[^>]*>/g, "").trim() : "";
+      };
+
+      const title = extract(/<meta\s+name="citation_title"\s+content="([^"]+)"/i)
+        || extract(/<h1 class="title mathjax">(?:<span[^>]*>[^<]*<\/span>\s*)?([^<]+)/i);
+      const authors = extract(/<meta\s+name="citation_authors"\s+content="([^"]+)"/i)
+        || extract(/<div class="authors">(?:<span[^>]*>[^<]*<\/span>\s*)?(.+?)<\/div>/is);
+      const abstractMatch = html.match(/<blockquote class="abstract mathjax">(?:<span[^>]*>[^<]*<\/span>\s*)?([\s\S]*?)<\/blockquote>/i);
+      const abstract = abstractMatch
+        ? abstractMatch[1].replace(/<[^>]*>/g, "").trim()
+        : "";
+      const subjects = extract(/<td class="tablecell subjects">(?:<span[^>]*>)?([\s\S]*?)<\/td>/i);
+
+      const parts = [];
+      if (title) parts.push(`Title: ${title}`);
+      if (authors) parts.push(`Authors: ${authors}`);
+      if (abstract) parts.push(`Abstract: ${abstract}`);
+      if (subjects) parts.push(`Subjects: ${subjects}`);
+
+      const content = parts.join("\n\n") || "Could not parse arxiv page.";
+
+      return {
+        content,
+        meta: {
+          title: title || `arxiv:${arxivId}`,
+          url: absUrl,
+          description: abstract.substring(0, 200),
+        },
+      };
+    } catch (e) {
+      console.warn("Failed to fetch arxiv abstract:", e);
       return null;
     }
   }
