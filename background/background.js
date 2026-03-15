@@ -250,10 +250,8 @@
     }).catch(() => {});
   }
 
-  // ===== YouTube Transcript (Innertube API, adapted from youtube-transcript-plus) =====
+  // ===== YouTube Transcript (parsed from watch page HTML) =====
   const YT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
-  const INNERTUBE_API_KEY_RE = /innertubeApiKey":"([^"]+)"/;
-  const INNERTUBE_CLIENT_VERSION = "20.10.38";
 
   function extractVideoId(url) {
     const patterns = [
@@ -288,8 +286,37 @@
     return `${m}:${String(sec).padStart(2, "0")}`;
   }
 
+  // Extract caption tracks from ytInitialPlayerResponse embedded in watch page HTML
+  function extractCaptionTracksFromHtml(html) {
+    // Try ytInitialPlayerResponse
+    const playerMatch = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\});\s*(?:var\s|<\/script)/s);
+    if (playerMatch) {
+      try {
+        const data = JSON.parse(playerMatch[1]);
+        const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+        const title = data?.videoDetails?.title || "";
+        if (tracks && tracks.length > 0) {
+          return { tracks, title };
+        }
+      } catch (e) {}
+    }
+
+    // Fallback: search for captions data in any embedded JSON
+    const captionMatch = html.match(/"captionTracks":\s*(\[.+?\])/s);
+    if (captionMatch) {
+      try {
+        const tracks = JSON.parse(captionMatch[1]);
+        if (tracks && tracks.length > 0) {
+          return { tracks, title: "" };
+        }
+      } catch (e) {}
+    }
+
+    return null;
+  }
+
   async function fetchYouTubeTranscript(videoId, lang = "en") {
-    // Step 1: Fetch the watch page to get the Innertube API key
+    // Step 1: Fetch the watch page HTML
     const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const watchResp = await fetch(watchUrl, {
       headers: { "User-Agent": YT_USER_AGENT },
@@ -303,44 +330,17 @@
       throw new Error("YouTube is rate limiting requests. Try again later.");
     }
 
-    const apiKeyMatch = watchHtml.match(INNERTUBE_API_KEY_RE);
-    if (!apiKeyMatch) {
-      throw new Error("Could not find YouTube API key on page.");
-    }
-    const innertubeKey = apiKeyMatch[1];
-
-    // Step 2: Call Innertube player API to get caption tracks
-    const playerResp = await fetch(
-      `https://www.youtube.com/youtubei/v1/player?key=${innertubeKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "User-Agent": YT_USER_AGENT },
-        body: JSON.stringify({
-          context: {
-            client: {
-              clientName: "ANDROID",
-              clientVersion: INNERTUBE_CLIENT_VERSION,
-            },
-          },
-          videoId: videoId,
-        }),
-      }
-    );
-    if (playerResp.status === 429) {
-      throw new Error("Too many requests. Try again later.");
-    }
-    if (!playerResp.ok) {
-      throw new Error("YouTube player API error.");
-    }
-    const playerData = await playerResp.json();
-
-    const tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-    if (!tracks || tracks.length === 0) {
+    // Step 2: Parse caption tracks from the embedded player response
+    const captionData = extractCaptionTracksFromHtml(watchHtml);
+    if (!captionData) {
       throw new Error("No captions available for this video.");
     }
+    const { tracks, title: videoTitle } = captionData;
 
     // Step 3: Pick track — prefer requested lang, fall back to first
-    const track = tracks.find(t => t.languageCode === lang) || tracks[0];
+    const track = tracks.find(t => t.languageCode === lang)
+      || tracks.find(t => t.languageCode?.startsWith(lang))
+      || tracks[0];
     const baseUrl = track.baseUrl;
     if (!baseUrl) {
       throw new Error("Caption track has no URL.");
@@ -374,9 +374,6 @@
 
     // Format with timestamps
     const formatted = entries.map(e => `[${formatTime(e.start)}] ${e.text}`).join("\n");
-
-    // Get video title from player data
-    const videoTitle = playerData?.videoDetails?.title || "";
 
     return { transcript: formatted, entries: entries.length, videoTitle };
   }

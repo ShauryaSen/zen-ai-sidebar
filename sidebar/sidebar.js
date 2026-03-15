@@ -1,22 +1,29 @@
 // Zen AI Sidebar — Sidebar UI Logic
-// Handles chat, quick actions, settings, and message streaming
+// Handles chat, quick actions, settings, message streaming, and persistent history
 
 (function () {
   "use strict";
 
   // ===== State =====
-  let conversationHistory = [];
+  let conversationHistory = []; // {role, text} array for API context
+  let messages = [];            // {role, text, html?} array for display persistence
+  let currentConvoId = null;
   let currentSelection = "";
   let isStreaming = false;
   let currentRequestId = 0;
   let isEditingShortcut = false;
   let pendingShortcut = "";
+  const MAX_CONVERSATIONS = 50;
 
   // ===== DOM Elements =====
   const messagesArea = document.getElementById("messagesArea");
   const chatInput = document.getElementById("chatInput");
   const sendBtn = document.getElementById("sendBtn");
   const clearBtn = document.getElementById("clearBtn");
+  const historyBtn = document.getElementById("historyBtn");
+  const historyPanel = document.getElementById("historyPanel");
+  const historyClose = document.getElementById("historyClose");
+  const historyList = document.getElementById("historyList");
   const settingsBtn = document.getElementById("settingsBtn");
   const settingsModal = document.getElementById("settingsModal");
   const settingsClose = document.getElementById("settingsClose");
@@ -48,6 +55,223 @@
     setupEventListeners();
     loadCustomThemeOptions();
     loadCurrentShortcut();
+    await restoreLastConversation();
+  }
+
+  // ===== Conversation Persistence =====
+  function generateId() {
+    return Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
+  }
+
+  // Get the conversation index (list of {id, title, updatedAt, messageCount})
+  async function getConvoIndex() {
+    const result = await browser.storage.local.get("convoIndex");
+    return result.convoIndex || [];
+  }
+
+  async function saveConvoIndex(index) {
+    await browser.storage.local.set({ convoIndex: index });
+  }
+
+  // Save the current conversation to storage
+  async function saveCurrentConversation() {
+    if (messages.length === 0) return;
+
+    if (!currentConvoId) {
+      currentConvoId = generateId();
+    }
+
+    // Derive title from first user message
+    const firstUser = messages.find(m => m.role === "user");
+    const title = firstUser
+      ? firstUser.text.substring(0, 80)
+      : "New conversation";
+
+    // Save conversation data
+    await browser.storage.local.set({
+      [`convo_${currentConvoId}`]: {
+        id: currentConvoId,
+        messages: messages,
+        conversationHistory: conversationHistory,
+      },
+    });
+
+    // Update index
+    const index = await getConvoIndex();
+    const existing = index.findIndex(c => c.id === currentConvoId);
+    const entry = {
+      id: currentConvoId,
+      title: title,
+      updatedAt: Date.now(),
+      messageCount: messages.length,
+    };
+    if (existing >= 0) {
+      index[existing] = entry;
+    } else {
+      index.unshift(entry);
+    }
+    // Trim old conversations
+    while (index.length > MAX_CONVERSATIONS) {
+      const old = index.pop();
+      await browser.storage.local.remove(`convo_${old.id}`);
+    }
+    await saveConvoIndex(index);
+
+    // Track which convo is active
+    await browser.storage.local.set({ activeConvoId: currentConvoId });
+  }
+
+  // Load a conversation by ID
+  async function loadConversation(id) {
+    const result = await browser.storage.local.get(`convo_${id}`);
+    const data = result[`convo_${id}`];
+    if (!data) return false;
+
+    currentConvoId = id;
+    messages = data.messages || [];
+    conversationHistory = data.conversationHistory || [];
+
+    // Rebuild the DOM
+    renderMessages();
+
+    await browser.storage.local.set({ activeConvoId: id });
+    return true;
+  }
+
+  // Restore the last active conversation on sidebar open
+  async function restoreLastConversation() {
+    try {
+      const result = await browser.storage.local.get("activeConvoId");
+      if (result.activeConvoId) {
+        const loaded = await loadConversation(result.activeConvoId);
+        if (loaded) return;
+      }
+    } catch (e) {}
+    // No conversation to restore — show welcome
+    showWelcome();
+  }
+
+  // Render all messages from the messages array
+  function renderMessages() {
+    if (messages.length === 0) {
+      showWelcome();
+      return;
+    }
+    messagesArea.innerHTML = "";
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        const div = document.createElement("div");
+        div.className = "message message-user";
+        div.innerHTML = `<div class="message-content">${escapeHtml(msg.text)}</div>`;
+        messagesArea.appendChild(div);
+      } else if (msg.role === "ai") {
+        const div = document.createElement("div");
+        div.className = "message message-ai";
+        div.innerHTML = `<span class="message-label">Zen AI</span><div class="message-content">${msg.html || renderMarkdown(msg.text)}</div>`;
+        messagesArea.appendChild(div);
+      } else if (msg.role === "error") {
+        const div = document.createElement("div");
+        div.className = "message message-ai message-error";
+        div.innerHTML = `<span class="message-label">Error</span><div class="message-content">${escapeHtml(msg.text)}</div>`;
+        messagesArea.appendChild(div);
+      } else if (msg.role === "transcript") {
+        const div = document.createElement("div");
+        div.className = "message message-ai";
+        const titleHtml = msg.videoTitle ? `<h3>Transcript: ${escapeHtml(msg.videoTitle)}</h3>` : "<h3>Transcript</h3>";
+        const preHtml = `<pre><code>${escapeHtml(msg.text)}</code></pre>`;
+        const copyBtnHtml = `<button class="copy-btn" data-copy-text="${escapeAttr(msg.text)}">Copy to Clipboard</button>`;
+        div.innerHTML = `<span class="message-label">Zen AI</span><div class="message-content">${titleHtml}${preHtml}${copyBtnHtml}</div>`;
+        messagesArea.appendChild(div);
+      }
+    }
+    scrollToBottom();
+  }
+
+  function showWelcome() {
+    messagesArea.innerHTML = `
+      <div class="welcome-message">
+        <div class="welcome-icon">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <h2>Zen AI</h2>
+        <p>Ask questions about the current page, summarize content, or get explanations for highlighted text.</p>
+      </div>`;
+  }
+
+  // Start a new conversation
+  function startNewConversation() {
+    currentConvoId = null;
+    conversationHistory = [];
+    messages = [];
+    showWelcome();
+  }
+
+  // Delete a conversation
+  async function deleteConversation(id) {
+    await browser.storage.local.remove(`convo_${id}`);
+    const index = await getConvoIndex();
+    const filtered = index.filter(c => c.id !== id);
+    await saveConvoIndex(filtered);
+
+    if (currentConvoId === id) {
+      startNewConversation();
+    }
+  }
+
+  // ===== History Panel =====
+  async function openHistoryPanel() {
+    const index = await getConvoIndex();
+    historyList.innerHTML = "";
+
+    if (index.length === 0) {
+      historyList.innerHTML = '<div class="history-empty">No conversations yet</div>';
+    } else {
+      for (const convo of index) {
+        const item = document.createElement("div");
+        item.className = "history-item" + (convo.id === currentConvoId ? " active" : "");
+
+        const age = formatAge(convo.updatedAt);
+
+        item.innerHTML = `
+          <div class="history-item-content">
+            <div class="history-item-title">${escapeHtml(convo.title)}</div>
+            <div class="history-item-meta">${convo.messageCount} messages &middot; ${age}</div>
+          </div>
+          <button class="history-item-delete" title="Delete">&times;</button>
+        `;
+
+        // Load conversation on click
+        item.querySelector(".history-item-content").addEventListener("click", async () => {
+          await loadConversation(convo.id);
+          historyPanel.classList.add("hidden");
+        });
+
+        // Delete button
+        item.querySelector(".history-item-delete").addEventListener("click", async (e) => {
+          e.stopPropagation();
+          await deleteConversation(convo.id);
+          await openHistoryPanel(); // refresh list
+        });
+
+        historyList.appendChild(item);
+      }
+    }
+
+    historyPanel.classList.remove("hidden");
+  }
+
+  function formatAge(timestamp) {
+    const diff = Date.now() - timestamp;
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+    return new Date(timestamp).toLocaleDateString();
   }
 
   // ===== Settings =====
@@ -64,7 +288,6 @@
       }
       themeSelect.value = result.sidebarTheme || "system";
 
-      // Layout
       const layout = result.sidebarLayout || "default";
       applyLayout(layout);
       updateLayoutButtons(layout);
@@ -90,7 +313,6 @@
     await ThemeManager.applyTheme(theme);
     applyLayout(layout);
 
-    // Also update the background script's model
     await browser.runtime.sendMessage({
       type: "SET_MODEL",
       model: model,
@@ -129,7 +351,6 @@
       opt.textContent = theme.name;
       customThemeGroup.appendChild(opt);
     }
-    // Re-select current theme in case it's custom
     try {
       const result = await browser.storage.local.get("sidebarTheme");
       if (result.sidebarTheme) themeSelect.value = result.sidebarTheme;
@@ -202,22 +423,18 @@
       return;
     }
 
-    // Build shortcut string from modifiers + key
     const parts = [];
     if (e.ctrlKey || e.metaKey) parts.push(e.metaKey ? "Command" : "Ctrl");
     if (e.altKey) parts.push("Alt");
     if (e.shiftKey) parts.push("Shift");
 
     const key = e.key;
-    // Skip if only modifier keys pressed
     if (["Control", "Alt", "Shift", "Meta"].includes(key)) {
       shortcutInput.value = parts.join("+") + "+...";
       return;
     }
 
-    // Normalize the key
     let normalizedKey = key.length === 1 ? key.toUpperCase() : key;
-    // Map some special keys
     const keyMap = {
       "ArrowUp": "Up", "ArrowDown": "Down", "ArrowLeft": "Left", "ArrowRight": "Right",
       " ": "Space", "Backspace": "Backspace", "Delete": "Delete",
@@ -238,7 +455,6 @@
         contextText.textContent = response.pageContext.meta.title;
         contextBar.title = response.pageContext.meta.url || "";
 
-        // Show/hide transcript button based on URL
         const url = response.pageContext.meta.url || "";
         if (url.includes("youtube.com/watch")) {
           transcriptBtn.classList.remove("hidden");
@@ -269,7 +485,6 @@
 
   // ===== Messages =====
   function addUserMessage(text) {
-    // Remove welcome message
     const welcome = messagesArea.querySelector(".welcome-message");
     if (welcome) welcome.remove();
 
@@ -278,6 +493,8 @@
     div.innerHTML = `<div class="message-content">${escapeHtml(text)}</div>`;
     messagesArea.appendChild(div);
     scrollToBottom();
+
+    messages.push({ role: "user", text });
   }
 
   function addAiMessage() {
@@ -316,17 +533,8 @@
     div.appendChild(contentDiv);
     messagesArea.appendChild(div);
     scrollToBottom();
-  }
 
-  function addErrorMessage(text) {
-    const div = document.createElement("div");
-    div.className = "message message-ai message-error";
-    div.innerHTML = `
-      <span class="message-label">Error</span>
-      <div class="message-content">${escapeHtml(text)}</div>
-    `;
-    messagesArea.appendChild(div);
-    scrollToBottom();
+    messages.push({ role: "transcript", text: transcript, videoTitle });
   }
 
   function scrollToBottom() {
@@ -341,42 +549,26 @@
 
     let html = escapeHtml(text);
 
-    // Code blocks (``` ... ```)
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
       return `<pre><code>${code.trim()}</code></pre>`;
     });
 
-    // Inline code
     html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-
-    // Bold
     html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-
-    // Italic
     html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
-
-    // Headers
     html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
     html = html.replace(/^## (.+)$/gm, "<h2>$1</h2>");
     html = html.replace(/^# (.+)$/gm, "<h1>$1</h1>");
-
-    // Blockquotes
     html = html.replace(/^&gt; (.+)$/gm, "<blockquote>$1</blockquote>");
-
-    // Unordered lists
     html = html.replace(/^[*-] (.+)$/gm, "<li>$1</li>");
     html = html.replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`);
-
-    // Ordered lists
     html = html.replace(/^\d+\. (.+)$/gm, "<li>$1</li>");
 
-    // Links
     html = html.replace(
       /\[([^\]]+)\]\(([^)]+)\)/g,
       '<a href="$2" target="_blank" rel="noopener">$1</a>'
     );
 
-    // Paragraphs — wrap remaining text blocks
     html = html
       .split("\n\n")
       .map((block) => {
@@ -416,7 +608,6 @@
     isStreaming = true;
     const requestId = ++currentRequestId;
 
-    // Display user message (for typed messages)
     if (text && !action) {
       addUserMessage(text);
       conversationHistory.push({ role: "user", text: text });
@@ -429,19 +620,18 @@
         keypoints: "Extract key points",
         "paper-summary": "Analyze as research paper",
       };
-      addUserMessage(actionLabels[action] || action);
+      const label = actionLabels[action] || action;
+      addUserMessage(label);
+      conversationHistory.push({ role: "user", text: label });
     }
 
-    // Create AI response container
     const aiContent = addAiMessage();
     let fullResponse = "";
 
-    // Clear input
     chatInput.value = "";
     chatInput.style.height = "auto";
     updateSendButton();
 
-    // Send to background script
     browser.runtime.sendMessage({
       type: "CHAT_REQUEST",
       requestId,
@@ -450,7 +640,6 @@
       conversationHistory: conversationHistory.slice(-10),
     });
 
-    // Listen for streamed response
     function responseHandler(msg) {
       if (msg.type !== "CHAT_RESPONSE" || msg.requestId !== requestId) return;
 
@@ -459,16 +648,19 @@
         if (msg.error === "NO_API_KEY") {
           aiContent.innerHTML =
             'No API key set. Click the <strong>settings</strong> icon to add your Gemini API key.';
+          messages.push({ role: "error", text: "No API key set." });
         } else {
-          aiContent.innerHTML = renderMarkdown(msg.message || "An error occurred.");
+          const errText = msg.message || "An error occurred.";
+          aiContent.innerHTML = renderMarkdown(errText);
+          messages.push({ role: "error", text: errText });
         }
         isStreaming = false;
+        saveCurrentConversation();
         browser.runtime.onMessage.removeListener(responseHandler);
         return;
       }
 
       if (msg.chunk) {
-        // Remove typing indicator on first chunk
         const typingIndicator = aiContent.querySelector(".typing-indicator");
         if (typingIndicator) typingIndicator.remove();
 
@@ -480,6 +672,8 @@
       if (msg.done) {
         isStreaming = false;
         conversationHistory.push({ role: "model", text: fullResponse });
+        messages.push({ role: "ai", text: fullResponse });
+        saveCurrentConversation();
         browser.runtime.onMessage.removeListener(responseHandler);
       }
     }
@@ -492,43 +686,45 @@
     if (isStreaming) return;
 
     addUserMessage("Get YouTube transcript");
+    conversationHistory.push({ role: "user", text: "Get YouTube transcript" });
     const aiContent = addAiMessage();
 
     try {
       const response = await browser.runtime.sendMessage({ type: "YOUTUBE_TRANSCRIPT_REQUEST" });
 
-      // Remove typing indicator
       const typingIndicator = aiContent.querySelector(".typing-indicator");
       if (typingIndicator) typingIndicator.remove();
 
       if (response?.error) {
         aiContent.closest(".message").classList.add("message-error");
         aiContent.textContent = response.error;
+        messages.push({ role: "error", text: response.error });
       } else if (response?.transcript) {
-        // Replace the AI message with formatted transcript
         aiContent.closest(".message").remove();
         addTranscriptMessage(response.transcript, response.videoTitle);
       } else {
         aiContent.closest(".message").classList.add("message-error");
         aiContent.textContent = "Failed to get transcript.";
+        messages.push({ role: "error", text: "Failed to get transcript." });
       }
     } catch (e) {
       const typingIndicator = aiContent.querySelector(".typing-indicator");
       if (typingIndicator) typingIndicator.remove();
       aiContent.closest(".message").classList.add("message-error");
       aiContent.textContent = "Failed to get transcript: " + e.message;
+      messages.push({ role: "error", text: "Failed to get transcript: " + e.message });
     }
+
+    saveCurrentConversation();
   }
 
   // ===== Event Listeners =====
   function setupEventListeners() {
-    // Send button
     sendBtn.addEventListener("click", () => {
       const text = chatInput.value.trim();
       if (text) sendMessage(text);
     });
 
-    // Enter to send (Shift+Enter for newline)
     chatInput.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
@@ -537,14 +733,12 @@
       }
     });
 
-    // Auto-resize textarea
     chatInput.addEventListener("input", () => {
       chatInput.style.height = "auto";
       chatInput.style.height = Math.min(chatInput.scrollHeight, 100) + "px";
       updateSendButton();
     });
 
-    // Quick action buttons
     quickActions.addEventListener("click", (e) => {
       const btn = e.target.closest(".action-btn");
       if (!btn) return;
@@ -556,7 +750,6 @@
       }
     });
 
-    // Copy button delegation
     messagesArea.addEventListener("click", (e) => {
       const copyBtn = e.target.closest(".copy-btn");
       if (!copyBtn) return;
@@ -573,19 +766,24 @@
       }
     });
 
-    // Clear conversation / New Chat
+    // New Chat — save current, start fresh
     clearBtn.addEventListener("click", () => {
-      conversationHistory = [];
-      messagesArea.innerHTML = `
-        <div class="welcome-message">
-          <div class="welcome-icon">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
-            </svg>
-          </div>
-          <h2>Zen AI</h2>
-          <p>Ask questions about the current page, summarize content, or get explanations for highlighted text.</p>
-        </div>`;
+      if (messages.length > 0) {
+        saveCurrentConversation();
+      }
+      startNewConversation();
+    });
+
+    // History panel
+    historyBtn.addEventListener("click", () => {
+      if (historyPanel.classList.contains("hidden")) {
+        openHistoryPanel();
+      } else {
+        historyPanel.classList.add("hidden");
+      }
+    });
+    historyClose.addEventListener("click", () => {
+      historyPanel.classList.add("hidden");
     });
 
     // Settings
@@ -607,17 +805,14 @@
 
     saveSettingsBtn.addEventListener("click", saveSettings);
 
-    // Toggle API key visibility
     toggleKeyVisibility.addEventListener("click", () => {
       apiKeyInput.type = apiKeyInput.type === "password" ? "text" : "password";
     });
 
-    // Theme select — live preview
     themeSelect.addEventListener("change", () => {
       ThemeManager.applyTheme(themeSelect.value);
     });
 
-    // Layout toggle buttons
     document.querySelectorAll(".layout-option").forEach((btn) => {
       btn.addEventListener("click", () => {
         document.querySelectorAll(".layout-option").forEach((b) => b.classList.remove("active"));
@@ -626,7 +821,6 @@
       });
     });
 
-    // Import theme
     importThemeBtn.addEventListener("click", () => {
       themeFileInput.click();
     });
@@ -648,7 +842,6 @@
       themeFileInput.value = "";
     });
 
-    // Shortcut editing
     editShortcutBtn.addEventListener("click", () => {
       if (isEditingShortcut) {
         stopEditingShortcut(false);
@@ -659,12 +852,10 @@
 
     shortcutInput.addEventListener("keydown", shortcutKeyHandler);
 
-    // Selection dismiss
     selectionDismiss.addEventListener("click", () => {
       updateSelectionBanner("");
     });
 
-    // Listen for selection updates from content script
     browser.runtime.onMessage.addListener((msg) => {
       if (msg.type === "SELECTION_UPDATE") {
         updateSelectionBanner(msg.selection);
@@ -674,14 +865,12 @@
       }
     });
 
-    // Update context when sidebar becomes visible
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) {
         updateContextBar();
       }
     });
 
-    // Periodic context update (every 5 seconds when visible)
     setInterval(() => {
       if (!document.hidden) {
         updateContextBar();
