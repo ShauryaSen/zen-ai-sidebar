@@ -1,0 +1,20 @@
+{
+  "id": "catppuccin-latte",
+  "name": "Catppuccin Latte",
+  "type": "light",
+  "colors": {
+    "bg-primary": "#eff1f5",
+    "bg-secondary": "#e6e9ef",
+    "bg-tertiary": "#ccd0da",
+    "bg-input": "#ccd0da",
+    "bg-user-msg": "#bcc0cc",
+    "text-primary": "#4c4f69",
+    "text-secondary": "#6c6f85",
+    "text-muted": "#9ca0b0",
+    "accent": "#1e66f5",
+    "accent-light": "rgba(30, 102, 245, 0.1)",
+    "border-color": "#bcc0cc",
+    "border-light": "#ccd0da",
+    "shadow-modal": "0 8px 30px rgba(0,0,0,0.12)"
+  }
+}

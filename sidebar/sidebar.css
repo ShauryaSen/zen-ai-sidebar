@@ -377,6 +377,7 @@ body {
 /* ===== Quick Actions ===== */
 .quick-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 8px 12px;
   flex-shrink: 0;
@@ -403,6 +404,34 @@ body {
   background: var(--bg-tertiary);
   color: var(--text-primary);
   border-color: var(--text-muted);
+}
+
+/* ===== Copy Button ===== */
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-top: 8px;
+}
+
+.copy-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.copy-btn.copied {
+  color: #2ecc71;
+  border-color: #2ecc71;
 }
 
 /* ===== Context Bar (bottom) ===== */
@@ -515,12 +544,15 @@ textarea::placeholder {
 .modal {
   width: 90%;
   max-width: 340px;
+  max-height: 90vh;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-modal);
   overflow: hidden;
   animation: modalIn 0.2s ease;
+  display: flex;
+  flex-direction: column;
 }
 
 @keyframes modalIn {
@@ -534,6 +566,7 @@ textarea::placeholder {
   justify-content: space-between;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
 }
 
 .modal-header h3 {
@@ -549,6 +582,7 @@ textarea::placeholder {
 
 .modal-body {
   padding: 16px;
+  overflow-y: auto;
 }
 
 .setting-group {
@@ -621,14 +655,14 @@ select:focus {
   border-color: var(--accent);
 }
 
-/* Theme toggle in settings */
+/* Layout toggle in settings */
 .theme-toggle-group {
   display: flex;
   gap: 4px;
   margin-top: 6px;
 }
 
-.theme-option {
+.layout-option {
   flex: 1;
   padding: 7px;
   font-size: 12px;
@@ -643,14 +677,69 @@ select:focus {
   transition: all 0.15s ease;
 }
 
-.theme-option:hover {
+.layout-option:hover {
   border-color: var(--text-muted);
 }
 
-.theme-option.active {
+.layout-option.active {
   background: var(--accent-light);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Theme import */
+.theme-import-row {
+  margin-top: 6px;
+}
+
+.import-theme-btn {
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.import-theme-btn:hover {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+/* Shortcut input */
+.shortcut-input-wrapper {
+  display: flex;
+  gap: 6px;
+}
+
+.shortcut-input-wrapper input {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.shortcut-input-wrapper input:focus {
+  border-color: var(--accent);
+}
+
+.shortcut-input-wrapper input.editing {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.shortcut-hint {
+  margin-top: 4px;
 }
 
 .save-btn {
@@ -678,4 +767,21 @@ select:focus {
   color: #2ecc71;
   margin-top: 8px;
   animation: fadeIn 0.2s ease;
+}
+
+.save-status.error {
+  color: #e74c3c;
+}
+
+/* ===== Mirrored Layout ===== */
+.layout-mirrored .header {
+  justify-content: flex-start;
+}
+
+.layout-mirrored .message-user {
+  justify-content: flex-start;
+}
+
+.layout-mirrored .message-user .message-content {
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px;
 }
