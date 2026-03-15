@@ -1,6 +1,8 @@
 # Zen AI Sidebar
 
-An AI-powered browser sidebar for [Zen Browser](https://zen-browser.app) and Firefox. Ask questions about the page you're viewing, summarize content, and get explanations for highlighted text, using your own gemini API key.
+Extension adding AI sidebar for [Zen Browser](https://zen-browser.app) and Firefox. Ask questions about the page you're viewing, summarize content, and get explanations for highlighted text, using your own Gemini API key.
+
+![Zen AI Demo](assets/demo.gif)
 
 ## Features
 
