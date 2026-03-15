@@ -177,10 +177,12 @@
       } else if (msg.role === "transcript") {
         const div = document.createElement("div");
         div.className = "message message-ai";
-        const titleHtml = msg.videoTitle ? `<h3>Transcript: ${escapeHtml(msg.videoTitle)}</h3>` : "<h3>Transcript</h3>";
+        const label = msg.aiGenerated ? "Transcript (AI-generated)" : "Transcript";
+        const titleHtml = msg.videoTitle ? `<h3>${label}: ${escapeHtml(msg.videoTitle)}</h3>` : `<h3>${label}</h3>`;
+        const noteHtml = msg.aiGenerated ? `<p class="transcript-note">No captions available. Transcribed by Gemini.</p>` : "";
         const preHtml = `<pre><code>${escapeHtml(msg.text)}</code></pre>`;
         const copyBtnHtml = `<button class="copy-btn" data-copy-text="${escapeAttr(msg.text)}">Copy to Clipboard</button>`;
-        div.innerHTML = `<span class="message-label">Zen AI</span><div class="message-content">${titleHtml}${preHtml}${copyBtnHtml}</div>`;
+        div.innerHTML = `<span class="message-label">Zen AI</span><div class="message-content">${titleHtml}${noteHtml}${preHtml}${copyBtnHtml}</div>`;
         messagesArea.appendChild(div);
       }
     }
@@ -513,7 +515,7 @@
     return div.querySelector(".message-content");
   }
 
-  function addTranscriptMessage(transcript, videoTitle) {
+  function addTranscriptMessage(transcript, videoTitle, aiGenerated) {
     const welcome = messagesArea.querySelector(".welcome-message");
     if (welcome) welcome.remove();
 
@@ -523,18 +525,20 @@
     const contentDiv = document.createElement("div");
     contentDiv.className = "message-content";
 
-    const titleHtml = videoTitle ? `<h3>Transcript: ${escapeHtml(videoTitle)}</h3>` : "<h3>Transcript</h3>";
+    const label = aiGenerated ? "Transcript (AI-generated)" : "Transcript";
+    const titleHtml = videoTitle ? `<h3>${label}: ${escapeHtml(videoTitle)}</h3>` : `<h3>${label}</h3>`;
+    const noteHtml = aiGenerated ? `<p class="transcript-note">No captions available. Transcribed by Gemini.</p>` : "";
     const preHtml = `<pre><code>${escapeHtml(transcript)}</code></pre>`;
     const copyBtnHtml = `<button class="copy-btn" data-copy-text="${escapeAttr(transcript)}">Copy to Clipboard</button>`;
 
-    contentDiv.innerHTML = titleHtml + preHtml + copyBtnHtml;
+    contentDiv.innerHTML = titleHtml + noteHtml + preHtml + copyBtnHtml;
 
     div.innerHTML = `<span class="message-label">Zen AI</span>`;
     div.appendChild(contentDiv);
     messagesArea.appendChild(div);
     scrollToBottom();
 
-    messages.push({ role: "transcript", text: transcript, videoTitle });
+    messages.push({ role: "transcript", text: transcript, videoTitle, aiGenerated: !!aiGenerated });
   }
 
   function scrollToBottom() {
@@ -701,7 +705,7 @@
         messages.push({ role: "error", text: response.error });
       } else if (response?.transcript) {
         aiContent.closest(".message").remove();
-        addTranscriptMessage(response.transcript, response.videoTitle);
+        addTranscriptMessage(response.transcript, response.videoTitle, response.aiGenerated);
       } else {
         aiContent.closest(".message").classList.add("message-error");
         aiContent.textContent = "Failed to get transcript.";

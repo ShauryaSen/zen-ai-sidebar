@@ -435,6 +435,13 @@ body {
   border-color: #2ecc71;
 }
 
+.transcript-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-bottom: 8px;
+}
+
 /* ===== Context Bar (bottom) ===== */
 .context-bar {
   display: flex;

@@ -250,134 +250,7 @@
     }).catch(() => {});
   }
 
-  // ===== YouTube Transcript (parsed from watch page HTML) =====
-  const YT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36";
-
-  function extractVideoId(url) {
-    const patterns = [
-      /(?:youtube\.com\/watch\?.*v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
-    ];
-    for (const p of patterns) {
-      const m = url.match(p);
-      if (m) return m[1];
-    }
-    return null;
-  }
-
-  function decodeXmlEntities(text) {
-    return text
-      .replace(/&#39;/g, "'")
-      .replace(/&amp;/g, "&")
-      .replace(/&quot;/g, '"')
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
-      .replace(/\n/g, " ");
-  }
-
-  function formatTime(seconds) {
-    const s = Math.floor(seconds);
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    if (h > 0) {
-      return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-    }
-    return `${m}:${String(sec).padStart(2, "0")}`;
-  }
-
-  // Extract caption tracks from ytInitialPlayerResponse embedded in watch page HTML
-  function extractCaptionTracksFromHtml(html) {
-    // Try ytInitialPlayerResponse
-    const playerMatch = html.match(/ytInitialPlayerResponse\s*=\s*(\{.+?\});\s*(?:var\s|<\/script)/s);
-    if (playerMatch) {
-      try {
-        const data = JSON.parse(playerMatch[1]);
-        const tracks = data?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-        const title = data?.videoDetails?.title || "";
-        if (tracks && tracks.length > 0) {
-          return { tracks, title };
-        }
-      } catch (e) {}
-    }
-
-    // Fallback: search for captions data in any embedded JSON
-    const captionMatch = html.match(/"captionTracks":\s*(\[.+?\])/s);
-    if (captionMatch) {
-      try {
-        const tracks = JSON.parse(captionMatch[1]);
-        if (tracks && tracks.length > 0) {
-          return { tracks, title: "" };
-        }
-      } catch (e) {}
-    }
-
-    return null;
-  }
-
-  async function fetchYouTubeTranscript(videoId, lang = "en") {
-    // Step 1: Fetch the watch page HTML
-    const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const watchResp = await fetch(watchUrl, {
-      headers: { "User-Agent": YT_USER_AGENT },
-    });
-    if (!watchResp.ok) {
-      throw new Error("Could not load YouTube page.");
-    }
-    const watchHtml = await watchResp.text();
-
-    if (watchHtml.includes('class="g-recaptcha"')) {
-      throw new Error("YouTube is rate limiting requests. Try again later.");
-    }
-
-    // Step 2: Parse caption tracks from the embedded player response
-    const captionData = extractCaptionTracksFromHtml(watchHtml);
-    if (!captionData) {
-      throw new Error("No captions available for this video.");
-    }
-    const { tracks, title: videoTitle } = captionData;
-
-    // Step 3: Pick track — prefer requested lang, fall back to first
-    const track = tracks.find(t => t.languageCode === lang)
-      || tracks.find(t => t.languageCode?.startsWith(lang))
-      || tracks[0];
-    const baseUrl = track.baseUrl;
-    if (!baseUrl) {
-      throw new Error("Caption track has no URL.");
-    }
-
-    // Step 4: Fetch transcript XML
-    const transcriptResp = await fetch(baseUrl, {
-      headers: { "User-Agent": YT_USER_AGENT },
-    });
-    if (!transcriptResp.ok) {
-      throw new Error("Could not fetch transcript data.");
-    }
-    const xml = await transcriptResp.text();
-
-    // Step 5: Parse XML with regex (background script has no DOMParser)
-    const entries = [];
-    const textRe = /<text start="([^"]*)" dur="([^"]*)">([^<]*)<\/text>/g;
-    let match;
-    while ((match = textRe.exec(xml)) !== null) {
-      const start = parseFloat(match[1]);
-      const dur = parseFloat(match[2]);
-      const text = decodeXmlEntities(match[3]).trim();
-      if (text) {
-        entries.push({ start, dur, text });
-      }
-    }
-
-    if (entries.length === 0) {
-      throw new Error("Transcript is empty.");
-    }
-
-    // Format with timestamps
-    const formatted = entries.map(e => `[${formatTime(e.start)}] ${e.text}`).join("\n");
-
-    return { transcript: formatted, entries: entries.length, videoTitle };
-  }
-
+  // ===== YouTube Transcript (relayed to content script, AI fallback) =====
   async function handleTranscriptRequest() {
     try {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
@@ -385,13 +258,85 @@
         return { error: "No active tab found." };
       }
       const url = tabs[0].url || "";
-      const videoId = extractVideoId(url);
-      if (!videoId) {
+      if (!url.includes("youtube.com/watch")) {
         return { error: "Not a YouTube video page." };
       }
-      return await fetchYouTubeTranscript(videoId);
+      // Relay to content script — it runs on the YouTube page with full
+      // cookie/session access, which is required for fetching transcript XML
+      const response = await browser.tabs.sendMessage(tabs[0].id, {
+        type: "GET_YOUTUBE_TRANSCRIPT",
+      });
+
+      // If content script found no captions, fall back to Gemini AI transcription
+      if (response?.noCaptions) {
+        return await aiTranscribe(response.videoUrl, response.videoTitle);
+      }
+
+      return response;
     } catch (e) {
-      return { error: e.message || "Failed to get transcript." };
+      return { error: "Could not get transcript. Make sure you're on a YouTube video page." };
+    }
+  }
+
+  // Use Gemini to transcribe a YouTube video when no captions exist
+  async function aiTranscribe(videoUrl, videoTitle) {
+    try {
+      const apiKey = await getApiKey();
+      if (!apiKey) {
+        return { error: "No API key set. Add your Gemini API key in settings to use AI transcription." };
+      }
+
+      const result = await browser.storage.local.get("geminiModel");
+      const model = result.geminiModel || GEMINI_MODEL;
+      const apiUrl = `${API_BASE}/${model}:generateContent?key=${apiKey}`;
+
+      const body = {
+        contents: [{
+          role: "user",
+          parts: [
+            {
+              fileData: {
+                mimeType: "video/mp4",
+                fileUri: videoUrl,
+              },
+            },
+            {
+              text: "Transcribe the spoken audio in this video. Output ONLY the transcript text with timestamps in this format:\n[M:SS] spoken text here\n\nDo not add summaries, commentary, or descriptions. Just the spoken words with timestamps.",
+            },
+          ],
+        }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 8192,
+        },
+      };
+
+      const resp = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`Gemini API error (${resp.status}): ${errText}`);
+      }
+
+      const data = await resp.json();
+      const transcript = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!transcript) {
+        return { error: "AI transcription returned no result." };
+      }
+
+      return {
+        transcript: transcript,
+        entries: transcript.split("\n").filter(l => l.trim()).length,
+        videoTitle: videoTitle || "",
+        aiGenerated: true,
+      };
+    } catch (e) {
+      return { error: "AI transcription failed: " + e.message };
     }
   }
 
