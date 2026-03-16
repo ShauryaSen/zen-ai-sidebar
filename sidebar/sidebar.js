@@ -175,15 +175,7 @@
         div.innerHTML = `<span class="message-label">Error</span><div class="message-content">${escapeHtml(msg.text)}</div>`;
         messagesArea.appendChild(div);
       } else if (msg.role === "transcript") {
-        const div = document.createElement("div");
-        div.className = "message message-ai";
-        const label = msg.aiGenerated ? "Transcript (AI-generated)" : "Transcript";
-        const titleHtml = msg.videoTitle ? `<h3>${label}: ${escapeHtml(msg.videoTitle)}</h3>` : `<h3>${label}</h3>`;
-        const noteHtml = msg.aiGenerated ? `<p class="transcript-note">No captions available. Transcribed by Gemini.</p>` : "";
-        const preHtml = `<pre><code>${escapeHtml(msg.text)}</code></pre>`;
-        const copyBtnHtml = `<button class="copy-btn" data-copy-text="${escapeAttr(msg.text)}">Copy to Clipboard</button>`;
-        div.innerHTML = `<span class="message-label">Zen AI</span><div class="message-content">${titleHtml}${noteHtml}${preHtml}${copyBtnHtml}</div>`;
-        messagesArea.appendChild(div);
+        addTranscriptMessage(msg.text, msg.videoTitle, msg.aiGenerated);
       }
     }
     scrollToBottom();
@@ -527,11 +519,30 @@
 
     const label = aiGenerated ? "Transcript (AI-generated)" : "Transcript";
     const titleHtml = videoTitle ? `<h3>${label}: ${escapeHtml(videoTitle)}</h3>` : `<h3>${label}</h3>`;
-    const noteHtml = aiGenerated ? `<p class="transcript-note">No captions available. Transcribed by Gemini.</p>` : "";
+    const noteHtml = aiGenerated ? `<p class="transcript-note">Transcribed by Gemini.</p>` : "";
     const preHtml = `<pre><code>${escapeHtml(transcript)}</code></pre>`;
-    const copyBtnHtml = `<button class="copy-btn" data-copy-text="${escapeAttr(transcript)}">Copy to Clipboard</button>`;
 
-    contentDiv.innerHTML = titleHtml + noteHtml + preHtml + copyBtnHtml;
+    contentDiv.innerHTML = titleHtml + noteHtml + preHtml;
+
+    const copyBtn = document.createElement("button");
+    copyBtn.className = "copy-btn";
+    copyBtn.textContent = "Copy to Clipboard";
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(transcript).then(() => {
+        copyBtn.textContent = "Copied!";
+        copyBtn.classList.add("copied");
+        setTimeout(() => {
+          copyBtn.textContent = "Copy to Clipboard";
+          copyBtn.classList.remove("copied");
+        }, 2000);
+      }).catch(() => {
+        copyBtn.textContent = "Copy failed";
+        setTimeout(() => {
+          copyBtn.textContent = "Copy to Clipboard";
+        }, 2000);
+      });
+    });
+    contentDiv.appendChild(copyBtn);
 
     div.innerHTML = `<span class="message-label">Zen AI</span>`;
     div.appendChild(contentDiv);
@@ -686,8 +697,11 @@
   }
 
   // ===== YouTube Transcript =====
+  let isTranscriptLoading = false;
+
   async function requestTranscript() {
-    if (isStreaming) return;
+    if (isStreaming || isTranscriptLoading) return;
+    isTranscriptLoading = true;
 
     addUserMessage("Get YouTube transcript");
     conversationHistory.push({ role: "user", text: "Get YouTube transcript" });
@@ -717,6 +731,8 @@
       aiContent.closest(".message").classList.add("message-error");
       aiContent.textContent = "Failed to get transcript: " + e.message;
       messages.push({ role: "error", text: "Failed to get transcript: " + e.message });
+    } finally {
+      isTranscriptLoading = false;
     }
 
     saveCurrentConversation();
@@ -751,22 +767,6 @@
         requestTranscript();
       } else if (action) {
         sendMessage(null, action);
-      }
-    });
-
-    messagesArea.addEventListener("click", (e) => {
-      const copyBtn = e.target.closest(".copy-btn");
-      if (!copyBtn) return;
-      const text = copyBtn.dataset.copyText;
-      if (text) {
-        navigator.clipboard.writeText(text).then(() => {
-          copyBtn.textContent = "Copied!";
-          copyBtn.classList.add("copied");
-          setTimeout(() => {
-            copyBtn.textContent = "Copy to Clipboard";
-            copyBtn.classList.remove("copied");
-          }, 2000);
-        });
       }
     });
 

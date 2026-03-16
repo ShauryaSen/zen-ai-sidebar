@@ -250,7 +250,7 @@
     }).catch(() => {});
   }
 
-  // ===== YouTube Transcript (relayed to content script, AI fallback) =====
+  // ===== YouTube Transcript (AI-powered via Gemini) =====
   async function handleTranscriptRequest() {
     try {
       const tabs = await browser.tabs.query({ active: true, currentWindow: true });
@@ -261,18 +261,8 @@
       if (!url.includes("youtube.com/watch")) {
         return { error: "Not a YouTube video page." };
       }
-      // Relay to content script — it runs on the YouTube page with full
-      // cookie/session access, which is required for fetching transcript XML
-      const response = await browser.tabs.sendMessage(tabs[0].id, {
-        type: "GET_YOUTUBE_TRANSCRIPT",
-      });
-
-      // If content script found no captions, fall back to Gemini AI transcription
-      if (response?.noCaptions) {
-        return await aiTranscribe(response.videoUrl, response.videoTitle);
-      }
-
-      return response;
+      const videoTitle = tabs[0].title || "";
+      return await aiTranscribe(url, videoTitle);
     } catch (e) {
       return { error: "Could not get transcript. Make sure you're on a YouTube video page." };
     }
@@ -337,20 +327,6 @@
       };
     } catch (e) {
       return { error: "AI transcription failed: " + e.message };
-    }
-  }
-
-  // ===== Academic Paper Detection =====
-  async function checkIsAcademicPaper() {
-    try {
-      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-      if (!tabs || tabs.length === 0) return false;
-      const response = await browser.tabs.sendMessage(tabs[0].id, {
-        type: "IS_ACADEMIC_PAPER",
-      });
-      return response?.isPaper || false;
-    } catch (e) {
-      return false;
     }
   }
 

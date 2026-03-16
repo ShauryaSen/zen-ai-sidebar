@@ -43,12 +43,6 @@
       "run_at": "document_idle"
     }
   ],
-  "web_accessible_resources": [
-    "themes/catppuccin-latte.json",
-    "themes/catppuccin-frappe.json",
-    "themes/catppuccin-macchiato.json",
-    "themes/catppuccin-mocha.json"
-  ],
   "background": {
     "scripts": ["background/background.js"]
   },
