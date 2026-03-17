@@ -1,0 +1,20 @@
+{
+  "id": "catppuccin-mocha",
+  "name": "Catppuccin Mocha",
+  "type": "dark",
+  "colors": {
+    "bg-primary": "#1e1e2e",
+    "bg-secondary": "#181825",
+    "bg-tertiary": "#313244",
+    "bg-input": "#313244",
+    "bg-user-msg": "#45475a",
+    "text-primary": "#cdd6f4",
+    "text-secondary": "#a6adc8",
+    "text-muted": "#6c7086",
+    "accent": "#89b4fa",
+    "accent-light": "rgba(137, 180, 250, 0.1)",
+    "border-color": "#45475a",
+    "border-light": "#313244",
+    "shadow-modal": "0 8px 30px rgba(0,0,0,0.4)"
+  }
+}

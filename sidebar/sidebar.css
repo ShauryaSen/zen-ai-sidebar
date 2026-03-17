@@ -74,6 +74,7 @@ body {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  position: relative;
 }
 
 /* ===== Header ===== */
@@ -336,6 +337,18 @@ body {
   color: var(--text-secondary);
 }
 
+/* LaTeX / KaTeX */
+.message-ai .message-content .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 10px 0;
+  padding: 4px 0;
+}
+
+.message-ai .message-content .katex {
+  font-size: 1.05em;
+}
+
 /* Typing indicator */
 .typing-indicator {
   display: flex;
@@ -377,6 +390,7 @@ body {
 /* ===== Quick Actions ===== */
 .quick-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   padding: 8px 12px;
   flex-shrink: 0;
@@ -403,6 +417,41 @@ body {
   background: var(--bg-tertiary);
   color: var(--text-primary);
   border-color: var(--text-muted);
+}
+
+/* ===== Copy Button ===== */
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-top: 8px;
+}
+
+.copy-btn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.copy-btn.copied {
+  color: #2ecc71;
+  border-color: #2ecc71;
+}
+
+.transcript-note {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-bottom: 8px;
 }
 
 /* ===== Context Bar (bottom) ===== */
@@ -515,12 +564,15 @@ textarea::placeholder {
 .modal {
   width: 90%;
   max-width: 340px;
+  max-height: 90vh;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-modal);
   overflow: hidden;
   animation: modalIn 0.2s ease;
+  display: flex;
+  flex-direction: column;
 }
 
 @keyframes modalIn {
@@ -534,6 +586,7 @@ textarea::placeholder {
   justify-content: space-between;
   padding: 14px 16px;
   border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
 }
 
 .modal-header h3 {
@@ -549,6 +602,7 @@ textarea::placeholder {
 
 .modal-body {
   padding: 16px;
+  overflow-y: auto;
 }
 
 .setting-group {
@@ -621,14 +675,14 @@ select:focus {
   border-color: var(--accent);
 }
 
-/* Theme toggle in settings */
+/* Layout toggle in settings */
 .theme-toggle-group {
   display: flex;
   gap: 4px;
   margin-top: 6px;
 }
 
-.theme-option {
+.layout-option {
   flex: 1;
   padding: 7px;
   font-size: 12px;
@@ -643,14 +697,69 @@ select:focus {
   transition: all 0.15s ease;
 }
 
-.theme-option:hover {
+.layout-option:hover {
   border-color: var(--text-muted);
 }
 
-.theme-option.active {
+.layout-option.active {
   background: var(--accent-light);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Theme import */
+.theme-import-row {
+  margin-top: 6px;
+}
+
+.import-theme-btn {
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.import-theme-btn:hover {
+  border-color: var(--text-muted);
+  color: var(--text-primary);
+}
+
+/* Shortcut input */
+.shortcut-input-wrapper {
+  display: flex;
+  gap: 6px;
+}
+
+.shortcut-input-wrapper input {
+  flex: 1;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.shortcut-input-wrapper input:focus {
+  border-color: var(--accent);
+}
+
+.shortcut-input-wrapper input.editing {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+.shortcut-hint {
+  margin-top: 4px;
 }
 
 .save-btn {
@@ -678,4 +787,130 @@ select:focus {
   color: #2ecc71;
   margin-top: 8px;
   animation: fadeIn 0.2s ease;
+}
+
+.save-status.error {
+  color: #e74c3c;
+}
+
+/* ===== History Panel ===== */
+.history-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg-primary);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  animation: fadeIn 0.15s ease;
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.history-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.history-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  color: var(--text-primary);
+}
+
+.history-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.history-item.active {
+  background: var(--accent-light);
+}
+
+.history-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-item-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.history-item-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+.history-item:hover .history-item-delete {
+  opacity: 1;
+}
+
+.history-item-delete:hover {
+  color: #e74c3c;
+}
+
+.history-empty {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ===== Mirrored Layout ===== */
+.layout-mirrored .header {
+  justify-content: flex-start;
+}
+
+.layout-mirrored .message-user {
+  justify-content: flex-start;
+}
+
+.layout-mirrored .message-user .message-content {
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-lg) 4px;
 }

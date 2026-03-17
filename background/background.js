@@ -4,9 +4,12 @@
 (function () {
   "use strict";
 
-  const GEMINI_MODEL = "gemini-2.5-flash";
+  const GEMINI_MODEL = "gemini-3-flash-preview";
   const API_BASE =
     "https://generativelanguage.googleapis.com/v1beta/models";
+
+  // Zen theme state
+  let cachedZenColors = null;
 
   // Get API key from storage
   async function getApiKey() {
@@ -23,12 +26,68 @@
       });
       if (!tabs || tabs.length === 0) return null;
 
+      const url = tabs[0].url || "";
+
+      // Arxiv PDF pages — content scripts can't inject into PDFs,
+      // so fetch the abstract page directly from the background script
+      const arxivPdfMatch = url.match(/arxiv\.org\/pdf\/([^/?#]+)/);
+      if (arxivPdfMatch) {
+        const arxivId = arxivPdfMatch[1].replace(/\.pdf$/, "");
+        return await fetchArxivAbstract(arxivId);
+      }
+
       const response = await browser.tabs.sendMessage(tabs[0].id, {
         type: "GET_PAGE_CONTENT",
       });
       return response;
     } catch (e) {
       console.warn("Could not get page content:", e.message);
+      return null;
+    }
+  }
+
+  // Fetch and parse an arxiv abstract page directly
+  async function fetchArxivAbstract(arxivId) {
+    try {
+      const absUrl = `https://arxiv.org/abs/${arxivId}`;
+      const resp = await fetch(absUrl);
+      if (!resp.ok) throw new Error("Failed to fetch arxiv page");
+      const html = await resp.text();
+
+      // Parse fields with regex (no DOMParser in background scripts)
+      const extract = (pattern) => {
+        const m = html.match(pattern);
+        return m ? m[1].replace(/<[^>]*>/g, "").trim() : "";
+      };
+
+      const title = extract(/<meta\s+name="citation_title"\s+content="([^"]+)"/i)
+        || extract(/<h1 class="title mathjax">(?:<span[^>]*>[^<]*<\/span>\s*)?([^<]+)/i);
+      const authors = extract(/<meta\s+name="citation_authors"\s+content="([^"]+)"/i)
+        || extract(/<div class="authors">(?:<span[^>]*>[^<]*<\/span>\s*)?(.+?)<\/div>/is);
+      const abstractMatch = html.match(/<blockquote class="abstract mathjax">(?:<span[^>]*>[^<]*<\/span>\s*)?([\s\S]*?)<\/blockquote>/i);
+      const abstract = abstractMatch
+        ? abstractMatch[1].replace(/<[^>]*>/g, "").trim()
+        : "";
+      const subjects = extract(/<td class="tablecell subjects">(?:<span[^>]*>)?([\s\S]*?)<\/td>/i);
+
+      const parts = [];
+      if (title) parts.push(`Title: ${title}`);
+      if (authors) parts.push(`Authors: ${authors}`);
+      if (abstract) parts.push(`Abstract: ${abstract}`);
+      if (subjects) parts.push(`Subjects: ${subjects}`);
+
+      const content = parts.join("\n\n") || "Could not parse arxiv page.";
+
+      return {
+        content,
+        meta: {
+          title: title || `arxiv:${arxivId}`,
+          url: absUrl,
+          description: abstract.substring(0, 200),
+        },
+      };
+    } catch (e) {
+      console.warn("Failed to fetch arxiv abstract:", e);
       return null;
     }
   }
@@ -157,6 +216,120 @@
     return fullResponse;
   }
 
+  // ===== Zen Browser Theme Detection =====
+  function initZenThemeDetection() {
+    try {
+      if (!browser.theme) return;
+
+      // Get initial theme
+      browser.theme.getCurrent().then((theme) => {
+        if (theme && theme.colors) {
+          cachedZenColors = theme.colors;
+          broadcastZenTheme(theme.colors);
+        }
+      }).catch(() => {});
+
+      // Listen for theme changes
+      if (browser.theme.onUpdated) {
+        browser.theme.onUpdated.addListener((updateInfo) => {
+          if (updateInfo.theme && updateInfo.theme.colors) {
+            cachedZenColors = updateInfo.theme.colors;
+            broadcastZenTheme(updateInfo.theme.colors);
+          }
+        });
+      }
+    } catch (e) {
+      // theme API not available
+    }
+  }
+
+  function broadcastZenTheme(colors) {
+    browser.runtime.sendMessage({
+      type: "ZEN_THEME_DETECTED",
+      colors: colors,
+    }).catch(() => {});
+  }
+
+  // ===== YouTube Transcript (AI-powered via Gemini) =====
+  async function handleTranscriptRequest() {
+    try {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      if (!tabs || tabs.length === 0) {
+        return { error: "No active tab found." };
+      }
+      const url = tabs[0].url || "";
+      if (!url.includes("youtube.com/watch")) {
+        return { error: "Not a YouTube video page." };
+      }
+      const videoTitle = tabs[0].title || "";
+      return await aiTranscribe(url, videoTitle);
+    } catch (e) {
+      return { error: "Could not get transcript. Make sure you're on a YouTube video page." };
+    }
+  }
+
+  // Use Gemini to transcribe a YouTube video when no captions exist
+  async function aiTranscribe(videoUrl, videoTitle) {
+    try {
+      const apiKey = await getApiKey();
+      if (!apiKey) {
+        return { error: "No API key set. Add your Gemini API key in settings to use AI transcription." };
+      }
+
+      const result = await browser.storage.local.get("geminiModel");
+      const model = result.geminiModel || GEMINI_MODEL;
+      const apiUrl = `${API_BASE}/${model}:generateContent?key=${apiKey}`;
+
+      const body = {
+        contents: [{
+          role: "user",
+          parts: [
+            {
+              fileData: {
+                mimeType: "video/mp4",
+                fileUri: videoUrl,
+              },
+            },
+            {
+              text: "Transcribe the spoken audio in this video. Output ONLY the transcript text with timestamps in this format:\n[M:SS] spoken text here\n\nDo not add summaries, commentary, or descriptions. Just the spoken words with timestamps.",
+            },
+          ],
+        }],
+        generationConfig: {
+          temperature: 0.2,
+          maxOutputTokens: 8192,
+        },
+      };
+
+      const resp = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`Gemini API error (${resp.status}): ${errText}`);
+      }
+
+      const data = await resp.json();
+      const transcript = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!transcript) {
+        return { error: "AI transcription returned no result." };
+      }
+
+      return {
+        transcript: transcript,
+        entries: transcript.split("\n").filter(l => l.trim()).length,
+        videoTitle: videoTitle || "",
+        aiGenerated: true,
+      };
+    } catch (e) {
+      return { error: "AI transcription failed: " + e.message };
+    }
+  }
+
   // Handle messages from sidebar
   browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "SELECTION_CHANGED") {
@@ -170,6 +343,17 @@
       return false;
     }
 
+    if (message.type === "YOUTUBE_NAVIGATION") {
+      // Forward YouTube navigation events to sidebar
+      browser.runtime
+        .sendMessage({
+          type: "YOUTUBE_NAVIGATION",
+          url: message.url,
+        })
+        .catch(() => {});
+      return false;
+    }
+
     if (message.type === "CHAT_REQUEST") {
       handleChatRequest(message, sender);
       return false; // Response sent via streaming messages
@@ -177,6 +361,18 @@
 
     if (message.type === "GET_CONTEXT") {
       handleGetContext().then(sendResponse);
+      return true;
+    }
+
+    if (message.type === "GET_ZEN_THEME") {
+      if (cachedZenColors) {
+        broadcastZenTheme(cachedZenColors);
+      }
+      return false;
+    }
+
+    if (message.type === "YOUTUBE_TRANSCRIPT_REQUEST") {
+      handleTranscriptRequest().then(sendResponse);
       return true;
     }
 
@@ -224,6 +420,12 @@
       } else if (action === "keypoints") {
         finalMessage =
           "Extract and list the key points from this page as a bullet-point list. Be specific and actionable.";
+      } else if (action === "paper-summary") {
+        finalMessage =
+          "Analyze this page as a research paper. Extract and present:\n\n" +
+          "## Title\n## Authors\n## Abstract\n## Methodology\n" +
+          "## Key Findings\n## Limitations\n## Conclusion\n\n" +
+          "If this is not a research paper, summarize the content using the above structure where applicable.";
       }
 
       // Stream response
@@ -257,4 +459,14 @@
       }).catch(() => {});
     }
   }
+
+  // ===== Toggle Sidebar via Custom Command =====
+  browser.commands.onCommand.addListener((command) => {
+    if (command === "toggle-sidebar") {
+      browser.sidebarAction.toggle();
+    }
+  });
+
+  // Initialize Zen theme detection on startup
+  initZenThemeDetection();
 })();

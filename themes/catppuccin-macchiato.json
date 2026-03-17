@@ -1,0 +1,20 @@
+{
+  "id": "catppuccin-macchiato",
+  "name": "Catppuccin Macchiato",
+  "type": "dark",
+  "colors": {
+    "bg-primary": "#24273a",
+    "bg-secondary": "#1e2030",
+    "bg-tertiary": "#363a4f",
+    "bg-input": "#363a4f",
+    "bg-user-msg": "#494d64",
+    "text-primary": "#cad3f5",
+    "text-secondary": "#a5adcb",
+    "text-muted": "#6e738d",
+    "accent": "#8aadf4",
+    "accent-light": "rgba(138, 173, 244, 0.1)",
+    "border-color": "#494d64",
+    "border-light": "#363a4f",
+    "shadow-modal": "0 8px 30px rgba(0,0,0,0.4)"
+  }
+}

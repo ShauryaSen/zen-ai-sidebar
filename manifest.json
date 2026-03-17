@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Zen AI Sidebar",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "AI-powered sidebar for Zen Browser using Gemini API. Summarize pages, explain selections, and ask contextual questions.",
   "icons": {
     "48": "icons/icon-48.png",
@@ -16,23 +16,30 @@
     }
   },
   "commands": {
-    "_execute_sidebar_action": {
+    "toggle-sidebar": {
       "suggested_key": {
-        "default": "Ctrl+Shift+B",
-        "mac": "Command+Shift+B"
+        "default": "Ctrl+Shift+U",
+        "mac": "Command+Shift+U"
       },
       "description": "Toggle Zen AI Sidebar"
     }
   },
   "permissions": [
     "activeTab",
+    "tabs",
     "storage",
-    "<all_urls>"
+    "<all_urls>",
+    "theme"
   ],
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
       "js": ["content/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.youtube.com/watch*"],
+      "js": ["content/youtube-transcript.js"],
       "run_at": "document_idle"
     }
   ],
