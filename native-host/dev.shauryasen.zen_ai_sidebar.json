@@ -1,0 +1,7 @@
+{
+  "name": "dev.shauryasen.zen_ai_sidebar",
+  "description": "Zen AI Sidebar - Gemini CLI bridge",
+  "path": "/PLACEHOLDER/native-host/gemini_host.js",
+  "type": "stdio",
+  "allowed_extensions": ["zen-ai-sidebar@extension"]
+}

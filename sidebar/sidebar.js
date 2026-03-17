@@ -18,10 +18,10 @@
   const settingsBtn = document.getElementById("settingsBtn");
   const settingsModal = document.getElementById("settingsModal");
   const settingsClose = document.getElementById("settingsClose");
-  const apiKeyInput = document.getElementById("apiKeyInput");
   const modelSelect = document.getElementById("modelSelect");
-  const toggleKeyVisibility = document.getElementById("toggleKeyVisibility");
   const saveSettingsBtn = document.getElementById("saveSettings");
+  const statusDot = document.getElementById("statusDot");
+  const statusText = document.getElementById("statusText");
   const saveStatus = document.getElementById("saveStatus");
   const contextBar = document.getElementById("contextBar");
   const contextText = document.getElementById("contextText");
@@ -73,12 +73,17 @@
   // ===== Settings =====
   async function loadSettings() {
     try {
-      const result = await browser.storage.local.get(["geminiApiKey", "geminiModel", "sidebarTheme"]);
-      if (result.geminiApiKey) {
-        apiKeyInput.value = result.geminiApiKey;
-      }
+      const result = await browser.storage.local.get(["geminiModel", "sidebarTheme"]);
       if (result.geminiModel) {
-        modelSelect.value = result.geminiModel;
+        // Validate stored model against available options
+        const validModels = Array.from(modelSelect.options).map(o => o.value);
+        if (validModels.includes(result.geminiModel)) {
+          modelSelect.value = result.geminiModel;
+        } else {
+          // Clear invalid cached model (e.g. from old version)
+          modelSelect.value = "";
+          await browser.storage.local.set({ geminiModel: "" });
+        }
       }
       updateThemeButtons(result.sidebarTheme || "system");
     } catch (e) {
@@ -88,27 +93,36 @@
   }
 
   async function saveSettings() {
-    const apiKey = apiKeyInput.value.trim();
     const model = modelSelect.value;
     const activeThemeBtn = document.querySelector(".theme-option.active");
     const theme = activeThemeBtn ? activeThemeBtn.dataset.themeValue : "system";
 
     await browser.storage.local.set({
-      geminiApiKey: apiKey,
       geminiModel: model,
       sidebarTheme: theme,
     });
 
     applyTheme(theme);
 
-    // Also update the background script's model
-    await browser.runtime.sendMessage({
-      type: "SET_MODEL",
-      model: model,
-    }).catch(() => {});
-
     saveStatus.classList.remove("hidden");
     setTimeout(() => saveStatus.classList.add("hidden"), 2000);
+  }
+
+  // ===== Connection Status =====
+  async function checkConnectionStatus() {
+    try {
+      const result = await browser.runtime.sendMessage({ type: "CHECK_NATIVE_HOST" });
+      if (result?.connected) {
+        statusDot.className = "status-dot connected";
+        statusText.textContent = "Connected";
+      } else {
+        statusDot.className = "status-dot disconnected";
+        statusText.textContent = result?.error || "Not connected — run install_host.sh";
+      }
+    } catch (e) {
+      statusDot.className = "status-dot disconnected";
+      statusText.textContent = "Could not check status";
+    }
   }
 
   // ===== Context =====
@@ -300,9 +314,9 @@
 
       if (msg.error) {
         aiContent.closest(".message").classList.add("message-error");
-        if (msg.error === "NO_API_KEY") {
+        if (msg.error === "NATIVE_HOST_ERROR") {
           aiContent.innerHTML =
-            'No API key set. Click the <strong>⚙ settings</strong> icon to add your Gemini API key.';
+            'Could not connect to Gemini CLI. Run <strong>install_host.sh</strong> and make sure <code>gemini</code> CLI is installed.';
         } else {
           aiContent.innerHTML = renderMarkdown(msg.message || "An error occurred.");
         }
@@ -381,6 +395,7 @@
     // Settings
     settingsBtn.addEventListener("click", () => {
       settingsModal.classList.remove("hidden");
+      checkConnectionStatus();
     });
 
     settingsClose.addEventListener("click", () => {
@@ -392,11 +407,6 @@
     });
 
     saveSettingsBtn.addEventListener("click", saveSettings);
-
-    // Toggle API key visibility
-    toggleKeyVisibility.addEventListener("click", () => {
-      apiKeyInput.type = apiKeyInput.type === "password" ? "text" : "password";
-    });
 
     // Theme toggle buttons
     document.querySelectorAll(".theme-option").forEach((btn) => {

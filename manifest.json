@@ -27,6 +27,7 @@
   "permissions": [
     "activeTab",
     "storage",
+    "nativeMessaging",
     "<all_urls>"
   ],
   "content_scripts": [
@@ -42,7 +43,10 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "zen-ai-sidebar@extension",
-      "strict_min_version": "109.0"
+      "strict_min_version": "109.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   }
 }

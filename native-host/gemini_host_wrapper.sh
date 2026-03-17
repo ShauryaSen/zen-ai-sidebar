@@ -1,0 +1,4 @@
+#!/bin/bash
+# Wrapper to launch the native host with the correct environment
+export PATH="/Users/shauryasen/.gemini/antigravity/scratch/bin:/Users/shauryasen/.antigravity/antigravity/bin:/opt/homebrew/bin:/Library/TeX/texbin:/Library/TeX/texbin:/Library/TeX/texbin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/Library/TeX/texbin:/Users/shauryasen/.gemini/antigravity/scratch/bin:/Users/shauryasen/.antigravity/antigravity/bin"
+exec "/opt/homebrew/bin/node" "/Users/shauryasen/Dev/zen-ai-sidebar/native-host/gemini_host.js"

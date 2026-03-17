@@ -1,18 +1,10 @@
 // Zen AI Sidebar — Background Script
-// Orchestrates communication and makes Gemini API calls
+// Orchestrates communication via Native Messaging to Gemini CLI
 
 (function () {
   "use strict";
 
-  const GEMINI_MODEL = "gemini-2.5-flash";
-  const API_BASE =
-    "https://generativelanguage.googleapis.com/v1beta/models";
-
-  // Get API key from storage
-  async function getApiKey() {
-    const result = await browser.storage.local.get("geminiApiKey");
-    return result.geminiApiKey || null;
-  }
+  const NATIVE_HOST_NAME = "dev.shauryasen.zen_ai_sidebar";
 
   // Get page content from active tab's content script
   async function getPageContext() {
@@ -76,85 +68,90 @@
     return systemPrompt;
   }
 
-  // Stream response from Gemini API
-  async function streamGeminiResponse(apiKey, systemPrompt, userMessage, conversationHistory, sendChunk) {
-    const url = `${API_BASE}/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${apiKey}`;
+  // Build a full prompt string from system prompt, conversation history, and user message
+  function buildFullPrompt(systemPrompt, conversationHistory, userMessage) {
+    let fullPrompt = `[System Instructions]\n${systemPrompt}\n\n`;
 
-    // Build contents array with conversation history
-    const contents = [];
-
-    // Add conversation history
-    for (const msg of conversationHistory) {
-      contents.push({
-        role: msg.role === "user" ? "user" : "model",
-        parts: [{ text: msg.text }],
-      });
-    }
-
-    // Add current user message
-    contents.push({
-      role: "user",
-      parts: [{ text: userMessage }],
-    });
-
-    const body = {
-      system_instruction: {
-        parts: [{ text: systemPrompt }],
-      },
-      contents: contents,
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 4096,
-      },
-    };
-
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Gemini API error (${response.status}): ${error}`);
-    }
-
-    // Parse SSE stream
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let fullResponse = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      // Process complete SSE events
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const data = line.slice(6).trim();
-          if (data === "[DONE]") continue;
-
-          try {
-            const parsed = JSON.parse(data);
-            const text = parsed?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (text) {
-              fullResponse += text;
-              sendChunk(text);
-            }
-          } catch (e) {
-            // Partial JSON, skip
-          }
-        }
+    if (conversationHistory.length > 0) {
+      fullPrompt += `[Conversation History]\n`;
+      for (const msg of conversationHistory) {
+        const role = msg.role === "user" ? "User" : "Assistant";
+        fullPrompt += `${role}: ${msg.text}\n\n`;
       }
     }
 
-    return fullResponse;
+    fullPrompt += `[Current User Message]\n${userMessage}`;
+    return fullPrompt;
+  }
+
+  // Send request to Gemini CLI via Native Messaging
+  function sendToGeminiCLI(fullPrompt, model, requestId) {
+    let port;
+    try {
+      port = browser.runtime.connectNative(NATIVE_HOST_NAME);
+    } catch (e) {
+      browser.runtime.sendMessage({
+        type: "CHAT_RESPONSE",
+        requestId,
+        error: "NATIVE_HOST_ERROR",
+        message:
+          "Could not connect to the Gemini CLI bridge. Please run install_host.sh first.",
+      }).catch(() => {});
+      return;
+    }
+
+    // Listen for responses
+    port.onMessage.addListener((msg) => {
+      if (msg.requestId !== requestId) return;
+
+      if (msg.error) {
+        browser.runtime.sendMessage({
+          type: "CHAT_RESPONSE",
+          requestId,
+          error: msg.error,
+          message: msg.message,
+        }).catch(() => {});
+        port.disconnect();
+        return;
+      }
+
+      if (msg.chunk) {
+        browser.runtime.sendMessage({
+          type: "CHAT_RESPONSE",
+          requestId,
+          chunk: msg.chunk,
+          done: false,
+        }).catch(() => {});
+      }
+
+      if (msg.done) {
+        browser.runtime.sendMessage({
+          type: "CHAT_RESPONSE",
+          requestId,
+          done: true,
+        }).catch(() => {});
+        port.disconnect();
+      }
+    });
+
+    // Handle disconnect/errors
+    port.onDisconnect.addListener(() => {
+      if (port.error) {
+        browser.runtime.sendMessage({
+          type: "CHAT_RESPONSE",
+          requestId,
+          error: "NATIVE_HOST_ERROR",
+          message: `Native host disconnected: ${port.error.message}. Run install_host.sh to set up the Gemini CLI bridge.`,
+        }).catch(() => {});
+      }
+    });
+
+    // Send the prompt
+    port.postMessage({
+      prompt: fullPrompt,
+      model: model || null,
+      requestId: requestId,
+    });
   }
 
   // Handle messages from sidebar
@@ -180,6 +177,11 @@
       return true;
     }
 
+    if (message.type === "CHECK_NATIVE_HOST") {
+      checkNativeHost().then(sendResponse);
+      return true;
+    }
+
     return false;
   });
 
@@ -189,21 +191,39 @@
     return { pageContext, selection };
   }
 
+  // Quick check to see if native host is available
+  async function checkNativeHost() {
+    return new Promise((resolve) => {
+      try {
+        const port = browser.runtime.connectNative(NATIVE_HOST_NAME);
+        // If we get here without error, the host is available
+        port.onMessage.addListener(() => {});
+        port.onDisconnect.addListener(() => {
+          if (port.error) {
+            resolve({ connected: false, error: port.error.message });
+          }
+        });
+        // Send a ping
+        port.postMessage({ type: "ping", requestId: "ping" });
+        // Give it a moment, then assume connected
+        setTimeout(() => {
+          port.disconnect();
+          resolve({ connected: true });
+        }, 500);
+      } catch (e) {
+        resolve({ connected: false, error: e.message });
+      }
+    });
+  }
+
   async function handleChatRequest(message) {
     const { userMessage, action, conversationHistory = [] } = message;
     const requestId = message.requestId;
 
     try {
-      const apiKey = await getApiKey();
-      if (!apiKey) {
-        browser.runtime.sendMessage({
-          type: "CHAT_RESPONSE",
-          requestId,
-          error: "NO_API_KEY",
-          message: "Please set your Gemini API key in the sidebar settings.",
-        });
-        return;
-      }
+      // Get model from storage
+      const stored = await browser.storage.local.get("geminiModel");
+      const model = stored.geminiModel || null;
 
       // Get page context
       const pageContext = await getPageContext();
@@ -226,28 +246,11 @@
           "Extract and list the key points from this page as a bullet-point list. Be specific and actionable.";
       }
 
-      // Stream response
-      await streamGeminiResponse(
-        apiKey,
-        systemPrompt,
-        finalMessage,
-        conversationHistory,
-        (chunk) => {
-          browser.runtime.sendMessage({
-            type: "CHAT_RESPONSE",
-            requestId,
-            chunk,
-            done: false,
-          }).catch(() => {});
-        }
-      );
+      // Build full prompt for CLI
+      const fullPrompt = buildFullPrompt(systemPrompt, conversationHistory, finalMessage);
 
-      // Signal completion
-      browser.runtime.sendMessage({
-        type: "CHAT_RESPONSE",
-        requestId,
-        done: true,
-      }).catch(() => {});
+      // Send to Gemini CLI via Native Messaging
+      sendToGeminiCLI(fullPrompt, model, requestId);
     } catch (error) {
       browser.runtime.sendMessage({
         type: "CHAT_RESPONSE",
