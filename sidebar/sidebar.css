@@ -337,6 +337,18 @@ body {
   color: var(--text-secondary);
 }
 
+/* LaTeX / KaTeX */
+.message-ai .message-content .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 10px 0;
+  padding: 4px 0;
+}
+
+.message-ai .message-content .katex {
+  font-size: 1.05em;
+}
+
 /* Typing indicator */
 .typing-indicator {
   display: flex;

@@ -562,13 +562,91 @@
   function renderMarkdown(text) {
     if (!text) return "";
 
-    let html = escapeHtml(text);
+    // Extract LaTeX blocks and code blocks before escaping to preserve them
+    const placeholders = [];
+    let processed = text;
 
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-      return `<pre><code>${code.trim()}</code></pre>`;
+    // Protect code blocks first
+    processed = processed.replace(/```(\w*)\n([\s\S]*?)```/g, (match) => {
+      const id = placeholders.length;
+      placeholders.push({ type: "codeblock", raw: match });
+      return `\x00PLACEHOLDER_${id}\x00`;
     });
 
-    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+    // Protect inline code
+    processed = processed.replace(/`([^`]+)`/g, (match) => {
+      const id = placeholders.length;
+      placeholders.push({ type: "inlinecode", raw: match });
+      return `\x00PLACEHOLDER_${id}\x00`;
+    });
+
+    // Protect display LaTeX ($$...$$)
+    processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (_, tex) => {
+      const id = placeholders.length;
+      try {
+        const rendered = katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false });
+        placeholders.push({ type: "latex", html: rendered });
+      } catch (e) {
+        placeholders.push({ type: "latex", html: escapeHtml(tex) });
+      }
+      return `\x00PLACEHOLDER_${id}\x00`;
+    });
+
+    // Protect inline LaTeX ($...$) — avoid matching currency like $5
+    processed = processed.replace(/\$([^\s$](?:[^$]*[^\s$])?)\$/g, (_, tex) => {
+      const id = placeholders.length;
+      try {
+        const rendered = katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false });
+        placeholders.push({ type: "latex", html: rendered });
+      } catch (e) {
+        placeholders.push({ type: "latex", html: escapeHtml(tex) });
+      }
+      return `\x00PLACEHOLDER_${id}\x00`;
+    });
+
+    // Protect \[...\] display math
+    processed = processed.replace(/\\\[([\s\S]*?)\\\]/g, (_, tex) => {
+      const id = placeholders.length;
+      try {
+        const rendered = katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false });
+        placeholders.push({ type: "latex", html: rendered });
+      } catch (e) {
+        placeholders.push({ type: "latex", html: escapeHtml(tex) });
+      }
+      return `\x00PLACEHOLDER_${id}\x00`;
+    });
+
+    // Protect \(...\) inline math
+    processed = processed.replace(/\\\(([\s\S]*?)\\\)/g, (_, tex) => {
+      const id = placeholders.length;
+      try {
+        const rendered = katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false });
+        placeholders.push({ type: "latex", html: rendered });
+      } catch (e) {
+        placeholders.push({ type: "latex", html: escapeHtml(tex) });
+      }
+      return `\x00PLACEHOLDER_${id}\x00`;
+    });
+
+    let html = escapeHtml(processed);
+
+    // Restore code blocks
+    html = html.replace(/\x00PLACEHOLDER_(\d+)\x00/g, (_, idx) => {
+      const p = placeholders[parseInt(idx)];
+      if (p.type === "codeblock") {
+        const match = p.raw.match(/```(\w*)\n([\s\S]*?)```/);
+        return `<pre><code>${escapeHtml(match[2].trim())}</code></pre>`;
+      }
+      if (p.type === "inlinecode") {
+        const match = p.raw.match(/`([^`]+)`/);
+        return `<code>${escapeHtml(match[1])}</code>`;
+      }
+      if (p.type === "latex") {
+        return p.html;
+      }
+      return p.raw;
+    });
+
     html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
     html = html.replace(/\*(.+?)\*/g, "<em>$1</em>");
     html = html.replace(/^### (.+)$/gm, "<h3>$1</h3>");
@@ -594,7 +672,8 @@
           block.startsWith("<pre") ||
           block.startsWith("<ul") ||
           block.startsWith("<ol") ||
-          block.startsWith("<blockquote")
+          block.startsWith("<blockquote") ||
+          block.startsWith("<span class=\"katex")
         ) {
           return block;
         }
