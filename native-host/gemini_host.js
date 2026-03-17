@@ -160,11 +160,22 @@ async function handleRequest(message) {
   const enhancedEnv = getEnhancedEnv();
   const geminiPath = findGeminiPath();
 
-  // Build the command arguments
+  // Use a persistent workspace folder at ~/.zen-ai/brain/
+  const fs = require("fs");
+  const workspaceDir = path.join(os.homedir(), ".zen-ai", "brain");
+  try {
+    fs.mkdirSync(workspaceDir, { recursive: true });
+  } catch (e) {
+    // ignore — directory likely already exists
+  }
+  const cwd = workspaceDir;
+
+  // Build the command arguments — use stream-json for structured output
   const args = [
     "--prompt", prompt,
     "--sandbox=false",
-    "--output-format", "text",
+    "--yolo",
+    "--output-format", "stream-json",
   ];
 
   if (model) {
@@ -185,21 +196,54 @@ async function handleRequest(message) {
     const child = spawn(command, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       env: enhancedEnv,
+      cwd: cwd,
     });
 
-    let fullResponse = "";
     let hasError = false;
+    let hasContent = false;
+    let lineBuffer = "";
+
+    // Notify the sidebar that the model is thinking
+    sendMessage({ requestId, thinking: true });
 
     child.stdout.on("data", (data) => {
-      const text = data.toString("utf-8");
-      fullResponse += text;
-      sendMessage({ requestId, chunk: text, done: false });
+      lineBuffer += data.toString("utf-8");
+
+      // Process complete JSON lines
+      const lines = lineBuffer.split("\n");
+      lineBuffer = lines.pop(); // Keep incomplete line in buffer
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        try {
+          const json = JSON.parse(trimmed);
+
+          if (json.type === "message" && json.role === "assistant" && json.delta) {
+            // Send content chunk
+            if (!hasContent) {
+              hasContent = true;
+              // Signal end of thinking, start of content
+              sendMessage({ requestId, thinking: false });
+            }
+            sendMessage({ requestId, chunk: json.content, done: false });
+          } else if (json.type === "result") {
+            // CLI finished
+            if (!hasContent && !hasError) {
+              sendMessage({ requestId, thinking: false });
+            }
+            sendMessage({ requestId, done: true });
+          }
+        } catch (e) {
+          // Not valid JSON — could be a non-JSON informational line, ignore
+        }
+      }
     });
 
     child.stderr.on("data", (data) => {
       const errText = data.toString("utf-8").trim();
       if (!errText) return;
-      // Some stderr output is informational (loading messages, etc.)
       // Only report actual errors
       const isError = /error|fatal|exception|ENOENT|not found|auth/i.test(errText);
       if (isError && !hasError) {
@@ -213,13 +257,14 @@ async function handleRequest(message) {
     });
 
     child.on("close", (code) => {
-      if (code !== 0 && fullResponse.length === 0 && !hasError) {
+
+      if (code !== 0 && !hasContent && !hasError) {
         sendMessage({
           requestId,
           error: "CLI_EXIT",
           message: `Gemini CLI exited with code ${code}. Make sure it's installed and authenticated:\n1. npm install -g @google/gemini-cli\n2. Run 'gemini' in terminal to authenticate`,
         });
-      } else if (!hasError) {
+      } else if (!hasError && !hasContent) {
         sendMessage({ requestId, done: true });
       }
     });

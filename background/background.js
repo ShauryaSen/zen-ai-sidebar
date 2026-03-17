@@ -46,9 +46,18 @@
   // Build system prompt with page context
   function buildSystemPrompt(pageContext, selection) {
     let systemPrompt =
-      `You are Zen AI, an intelligent assistant embedded in the user's browser sidebar. ` +
-      `You help users understand, summarize, and interact with web content. ` +
-      `Be concise, helpful, and direct. Use markdown formatting in your responses.`;
+      `You are Zen AI, an intelligent assistant running inside a browser sidebar extension. ` +
+      `You are invoked via the Gemini CLI in non-interactive mode from a workspace at ~/.zen-ai/brain/. ` +
+      `Your primary purpose is to help users understand, summarize, and interact with web content, ` +
+      `but you are also a capable general-purpose assistant. ` +
+      `Be concise, helpful, and direct. Use markdown formatting in your responses.\n\n` +
+      `IMPORTANT CONTEXT ABOUT YOUR ENVIRONMENT:\n` +
+      `- You are running inside a browser sidebar, NOT in a terminal or code editor.\n` +
+      `- Your workspace directory (~/.zen-ai/brain/) is a persistent folder for your use. It is NOT a code project.\n` +
+      `- The user may or may not have a webpage open. If no page context is provided below, ` +
+      `just respond to their question directly as a general assistant.\n` +
+      `- Do NOT attempt to read files, list directories, or use filesystem tools unless the user explicitly asks you to.\n` +
+      `- Do NOT be confused by the lack of project files in your workspace — that is expected.`;
 
     if (pageContext) {
       systemPrompt += `\n\n--- CURRENT PAGE CONTEXT ---`;
@@ -59,6 +68,8 @@
       }
       systemPrompt += `\n\nPage Content:\n${pageContext.content}`;
       systemPrompt += `\n--- END PAGE CONTEXT ---`;
+    } else {
+      systemPrompt += `\n\n[No webpage is currently loaded. Respond as a general-purpose assistant.]`;
     }
 
     if (selection) {
@@ -113,6 +124,14 @@
         }).catch(() => {});
         port.disconnect();
         return;
+      }
+
+      if (msg.thinking !== undefined) {
+        browser.runtime.sendMessage({
+          type: "CHAT_RESPONSE",
+          requestId,
+          thinking: msg.thinking,
+        }).catch(() => {});
       }
 
       if (msg.chunk) {

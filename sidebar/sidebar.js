@@ -171,8 +171,9 @@
     div.innerHTML = `
       <span class="message-label">Zen AI</span>
       <div class="message-content">
-        <div class="typing-indicator">
-          <span></span><span></span><span></span>
+        <div class="thinking-indicator">
+          <span class="thinking-text">Thinking</span>
+          <span class="thinking-dots"><span>.</span><span>.</span><span>.</span></span>
         </div>
       </div>
     `;
@@ -325,10 +326,18 @@
         return;
       }
 
+      if (msg.thinking === true) {
+        // Show thinking indicator (already present from addAiMessage)
+        const thinkingIndicator = aiContent.querySelector(".thinking-indicator");
+        if (thinkingIndicator) {
+          thinkingIndicator.style.display = "flex";
+        }
+      }
+
       if (msg.chunk) {
-        // Remove typing indicator on first chunk
-        const typingIndicator = aiContent.querySelector(".typing-indicator");
-        if (typingIndicator) typingIndicator.remove();
+        // Remove thinking indicator on first chunk
+        const thinkingIndicator = aiContent.querySelector(".thinking-indicator");
+        if (thinkingIndicator) thinkingIndicator.remove();
 
         fullResponse += msg.chunk;
         aiContent.innerHTML = renderMarkdown(fullResponse);
@@ -336,6 +345,10 @@
       }
 
       if (msg.done) {
+        // Remove thinking indicator if still present
+        const thinkingIndicator = aiContent.querySelector(".thinking-indicator");
+        if (thinkingIndicator) thinkingIndicator.remove();
+
         isStreaming = false;
         conversationHistory.push({ role: "model", text: fullResponse });
         browser.runtime.onMessage.removeListener(responseHandler);
